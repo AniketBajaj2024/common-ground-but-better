@@ -91,34 +91,41 @@ export class RoomManager {
         });
     }
 
-    onOffer(roomId: string, sdp: string) {
-        console.log("Processing offer...");
+    onOffer(roomId: string, sdp: string, senderSocketId: string) {
         const room = this.rooms.get(roomId);
         if (!room) {
             console.error(`Room not found for roomId: ${roomId}`);
             return;
         }
-        const user2 = room.user2;
-        console.log("User 2 is " + (user2 ? user2.name : 'undefined'));
-        user2?.socket.emit("offer", {
+        const receivingUser = room.user1.socket.id === senderSocketId ? room.user2 : room.user1;        
+        receivingUser?.socket.emit("offer", {
             sdp,
             roomId
         });
     }
 
-    onAnswer(roomId: string, sdp: string) {
-        console.log("Processing answer...");
+    onAnswer(roomId: string, sdp: string, senderSocketId:string) {
         const room = this.rooms.get(roomId);
         if (!room) {
             console.error(`Room not found for roomId: ${roomId}`);
             return;
         }
-        const user1 = room.user1;
-        console.log("User 1 is " + (user1 ? user1.name : 'undefined'));
-        user1?.socket.emit("answer", {
+        const receivingUser = room.user1.socket.id === senderSocketId ? room.user2 : room.user1;        
+        
+        receivingUser?.socket.emit("answer", {
             sdp,
             roomId
         });
+    }
+
+    onIceCandidates(roomId : string , senderSocketId : string , candidate : any, type : "sender" | "receiver"){
+        const room = this.rooms.get(roomId);
+        if(!room){
+            console.log("room not found in incecandiates");
+            return;
+        }
+        const receivingUser = room.user1.socket.id === senderSocketId ? room.user2 : room.user1;
+        receivingUser.socket.send("add-ice-candidate", ({candidate, type}));
     }
 
     generateRoomId() {

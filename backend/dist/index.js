@@ -20,6 +20,7 @@ io.on('connection', (socket) => {
     console.log("A user connected");
     userManager.addUser("random User", socket);
     socket.on("disonnect", () => {
+        console.log("user disconnected");
         userManager.removeUser(socket.id);
     });
 });

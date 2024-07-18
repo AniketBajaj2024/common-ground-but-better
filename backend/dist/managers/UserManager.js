@@ -56,6 +56,9 @@ class UserManager {
             console.log("answer recieved");
             this.roomManager.onAnswer(roomId, sdp);
         });
+        socket.on("add-ice-candidate", ({ candidate, roomId }) => {
+            this.roomManager.onIceCandidates(roomId, socket.id, candidate);
+        });
     }
 }
 exports.UserManager = UserManager;
