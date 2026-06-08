@@ -24,8 +24,8 @@ export const Room = ({
     const [remoteVideoTrack, setRemoteVideoTrack] = useState<MediaStreamTrack | null>(null);
     const [remoteAudioTrack, setRemoteAudioTrack] = useState<MediaStreamTrack | null>(null);
     const [remoteMediaStream, setRemoteMediaStream] = useState<MediaStream | null>(null);
-    const remoteVideoRef = useRef<HTMLVideoElement>();
-    const localVideoRef =useRef<HTMLVideoElement>();
+    const remoteVideoRef = useRef<HTMLVideoElement>(null);
+    const localVideoRef =useRef<HTMLVideoElement>(null);
 
 
     
