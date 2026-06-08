@@ -118,7 +118,8 @@ export const Room = ({
                 if(e.candidate){
                     socket.emit("add-ice-candidate", {
                         candidate : e.candidate,
-                        type: "sender"
+                        type: "sender",
+                        roomId: data.roomId
                     })
                 }
             }
@@ -167,7 +168,8 @@ export const Room = ({
                 if(e.candidate){
                     socket.emit("add-ice-candidate", {
                         candidate : e.candidate,
-                        type : "receiver"
+                        type : "receiver",
+                        roomId: roomId
                     })
                 }
             }
