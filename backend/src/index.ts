@@ -6,7 +6,7 @@ import { UserManager } from './managers/UserManager';
 console.log("Starting server...");
 
 const app = express();
-const server = http.createServer(http);
+const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         origin : "*"
@@ -18,12 +18,12 @@ const userManager = new UserManager();
 io.on('connection', (socket: Socket) => {
     console.log("A user connected");
     userManager.addUser("random User", socket);
-    socket.on("disonnect", ()=>{
+    socket.on("disconnect", ()=>{
         console.log("user disconnected");
         userManager.removeUser(socket.id);
     })
 });
 
 server.listen(4000, () => {
-    console.log('Server is listening on port 3000');
+    console.log('Server is listening on port 4000');
 });
