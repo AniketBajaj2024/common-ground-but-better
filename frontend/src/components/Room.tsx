@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Socket, io } from "socket.io-client";
+import { io } from "socket.io-client";
 
 const URL = "http://localhost:4000";
 
@@ -10,15 +9,22 @@ const URL = "http://localhost:4000";
 export const Room = ({
     name,
     localAudioTrack,
-    localVideoTrack
+    localVideoTrack,
+    onLeave
 } :{
     name : string,
     localAudioTrack : MediaStreamTrack | null,
-    localVideoTrack : MediaStreamTrack | null
+    localVideoTrack : MediaStreamTrack | null,
+    onLeave: () => void
 }) => {
     const [lobby, setLobby] = useState(true);
+    const [connectionState, setConnectionState] = useState<"connecting" | "waiting" | "connected" | "disconnected">("connecting");
+    const [isAudioEnabled, setIsAudioEnabled] = useState(true);
+    const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+
     const sendingPcRef = useRef<RTCPeerConnection | null>(null);
     const receivingPcRef = useRef<RTCPeerConnection | null>(null);
+    const socketRef = useRef<ReturnType<typeof io> | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const localVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -33,14 +39,71 @@ export const Room = ({
         receiver: []
     });
 
+    const closePeerConnections = () => {
+        if (sendingPcRef.current) {
+            sendingPcRef.current.ontrack = null;
+            sendingPcRef.current.onicecandidate = null;
+            sendingPcRef.current.close();
+            sendingPcRef.current = null;
+        }
+
+        if (receivingPcRef.current) {
+            receivingPcRef.current.ontrack = null;
+            receivingPcRef.current.onicecandidate = null;
+            receivingPcRef.current.close();
+            receivingPcRef.current = null;
+        }
+
+        pendingCandidates.current = {
+            sender: [],
+            receiver: []
+        };
+
+        if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = null;
+        }
+    };
+
+    const rtcConfiguration: RTCConfiguration = {
+        iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" }
+        ]
+    };
+
+
+    useEffect(() => {
+        if (localAudioTrack) {
+            localAudioTrack.enabled = isAudioEnabled;
+        }
+    }, [localAudioTrack, isAudioEnabled]);
+
+    useEffect(() => {
+        if (localVideoTrack) {
+            localVideoTrack.enabled = isVideoEnabled;
+        }
+    }, [localVideoTrack, isVideoEnabled]);
 
     useEffect(() => {
         const socket = io(URL);
+        socketRef.current = socket;
+        setConnectionState("connecting");
 
         const attachPeerConnectionLogs = (pc: RTCPeerConnection, label: string) => {
             pc.oniceconnectionstatechange = () => console.log(`${label} iceConnectionState:`, pc.iceConnectionState);
             pc.onsignalingstatechange = () => console.log(`${label} signalingState:`, pc.signalingState);
-            pc.onconnectionstatechange = () => console.log(`${label} connectionState:`, pc.connectionState);
+            pc.onconnectionstatechange = () => {
+                console.log(`${label} connectionState:`, pc.connectionState);
+                if (pc.connectionState === "connected") {
+                    setConnectionState("connected");
+                }
+
+                if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
+                    closePeerConnections();
+                    setConnectionState("waiting");
+                    setLobby(true);
+                }
+            };
         };
 
         const addRemoteTrackToVideo = (track: MediaStreamTrack) => {
@@ -53,6 +116,21 @@ export const Room = ({
             const stream = remoteVideoRef.current.srcObject as MediaStream;
             stream.addTrack(track);
 
+            track.onended = () => {
+                if (!remoteVideoRef.current?.srcObject) {
+                    return;
+                }
+
+                const activeStream = remoteVideoRef.current.srcObject as MediaStream;
+                activeStream.removeTrack(track);
+
+                if (activeStream.getTracks().length === 0) {
+                    remoteVideoRef.current.srcObject = null;
+                    setConnectionState("waiting");
+                    setLobby(true);
+                }
+            };
+
             if (track.kind === "video") {
                 remoteVideoRef.current.play().catch(() => {});
             }
@@ -61,7 +139,10 @@ export const Room = ({
         const handleSendOffer = async (data: { roomId: string }) => {
             console.log("sending offer");
             setLobby(false);
-            const pc = new RTCPeerConnection();
+            setConnectionState("connecting");
+            closePeerConnections();
+
+            const pc = new RTCPeerConnection(rtcConfiguration);
             sendingPcRef.current = pc;
 
             attachPeerConnectionLogs(pc, "SENDER_PC");
@@ -75,16 +156,16 @@ export const Room = ({
             if (tracksRef.current.audio) pc.addTrack(tracksRef.current.audio);
             
 
-            pc.onicecandidate = async(e)=>{
+            pc.onicecandidate = async (e) => {
                 console.log("recieving ice candidate locally");
-                if(e.candidate){
+                if (e.candidate) {
                     socket.emit("add-ice-candidate", {
                         candidate : e.candidate,
                         type: "sender",
                         roomId: data.roomId
-                    })
+                    });
                 }
-            }
+            };
 
             pc.ontrack = ({ track }) => {
                 addRemoteTrackToVideo(track);
@@ -93,27 +174,26 @@ export const Room = ({
             
             // In WEBRTC one peer to peer connection so if 3rd user comes in then it will send request to remaining two but RTC can only make on p2p connection: https://stackoverflow.com/questions/66062565/failed-to-set-remote-answer-sdp-called-in-wrong-state-stable
             pc.onnegotiationneeded = async ()=>{
-                // alert("on negotiation needed");
                 console.log("on negotiation needed , sending offer");
                     const sdp = await pc.createOffer();
-                    //@ts-ignore
-                    pc.setLocalDescription(sdp);
+                    await pc.setLocalDescription(sdp);
                     socket.emit("offer", {
-                    sdp,  // Include the actual SDP here
+                    sdp,
                     roomId: data.roomId
                 });
                 
-            }
+            };
         };
 
-        // here offer is nothing but the sdp we are getting from the another user
         const handleOffer = async ({ roomId, sdp :remoteSdp }: { roomId: string; sdp : RTCSessionDescriptionInit}) => {
             console.log("reveived offer");
             console.log("sending offer")
             setLobby(false);
+            setConnectionState("connecting");
 
-            const pc = new RTCPeerConnection();
-            // remote description will tell that the other person have this sdp so 
+            closePeerConnections();
+
+            const pc = new RTCPeerConnection(rtcConfiguration);
             
             receivingPcRef.current = pc;
             attachPeerConnectionLogs(pc, "RECEIVER_PC");
@@ -135,7 +215,7 @@ export const Room = ({
                         roomId: roomId
                     })
                 }
-            }
+            };
             
             await pc.setRemoteDescription(remoteSdp);
 
@@ -154,20 +234,20 @@ export const Room = ({
             });
         };
 
-        const handleAnswer = async ({ roomId, sdp : remoteSdp }: { roomId: string; sdp : RTCSessionDescriptionInit })  => {
-            // alert("Connection done");
+        const handleAnswer = async ({ sdp : remoteSdp }: { roomId: string; sdp : RTCSessionDescriptionInit })  => {
             setLobby(false);
-try {
+            setConnectionState("connecting");
+            try {
                 if (!sendingPcRef.current) return;
                 
                 await sendingPcRef.current.setRemoteDescription(remoteSdp);
                 console.log("Remote description set successfully.");
 
-                // FIX 1: Process any queued ICE candidates that arrived early from the Receiver
                 pendingCandidates.current.receiver.forEach(candidate => {
                     sendingPcRef.current?.addIceCandidate(candidate).catch(console.error);
                 });
                 pendingCandidates.current.receiver = [];
+                setConnectionState("connected");
 
             } catch (e) {
                 console.error("Error setting remote description:", e);
@@ -176,8 +256,28 @@ try {
 
         const handleLobby = () => {
             setLobby(true);
+            setConnectionState("waiting");
         };
 
+        const handleSocketConnect = () => {
+            setConnectionState("waiting");
+        };
+
+        const handleSocketDisconnect = () => {
+            closePeerConnections();
+            setLobby(true);
+            setConnectionState("disconnected");
+        };
+
+        const handleMessage = (message: unknown) => {
+            if (message === "lobby") {
+                handleLobby();
+            }
+        };
+
+        socket.on("connect", handleSocketConnect);
+        socket.on("disconnect", handleSocketDisconnect);
+        socket.on("message", handleMessage);
         socket.on('send-offer', handleSendOffer);
         socket.on('offer', handleOffer);
         socket.on('answer', handleAnswer);
@@ -196,11 +296,16 @@ try {
         } )
 
         return () => {
+            closePeerConnections();
+            socket.off("connect", handleSocketConnect);
+            socket.off("disconnect", handleSocketDisconnect);
+            socket.off("message", handleMessage);
             socket.off('send-offer', handleSendOffer);
             socket.off('offer', handleOffer);
             socket.off('answer', handleAnswer);
             socket.off('lobby', handleLobby);
             socket.close();
+            socketRef.current = null;
         };
     }, [name]);
 
@@ -208,16 +313,74 @@ try {
     useEffect(() => {
         if (localVideoRef.current && localVideoTrack) {
             localVideoRef.current.srcObject = new MediaStream([localVideoTrack]);
+            localVideoRef.current.play().catch(() => null);
         }
     }, [localVideoTrack]);
 
+    const statusLabel = connectionState === "connected"
+        ? "Connected"
+        : connectionState === "disconnected"
+            ? "Disconnected from server"
+            : lobby
+                ? "Waiting for a match"
+                : "Connecting call";
 
-    return <div>
-        Hi {name}
-        <div>Local video</div>
-        <video autoPlay width={400} height={400} ref= {localVideoRef}/>
-        {lobby ? "Waiting to connect you to someone" : null}
-        <div>Remote video</div>
-        <video autoPlay width={400} height={400} ref= {remoteVideoRef}/>
+    const statusClass = connectionState === "connected"
+        ? "status-chip status-ok"
+        : connectionState === "disconnected"
+            ? "status-chip status-bad"
+            : "status-chip status-warn";
+
+    return <div className="page-shell">
+        <div className="panel room-panel">
+            <div className="room-header">
+                <div>
+                    <p className="eyebrow">You are in queue as {name}</p>
+                    <h2>Live Match Room</h2>
+                </div>
+                <span className={statusClass}>{statusLabel}</span>
+            </div>
+
+            <div className="video-grid">
+                <div className="video-block">
+                    <p className="video-label">You</p>
+                    <video autoPlay muted playsInline ref={localVideoRef} className="video-card" />
+                </div>
+                <div className="video-block">
+                    <p className="video-label">Partner</p>
+                    <video autoPlay playsInline ref={remoteVideoRef} className="video-card" />
+                </div>
+            </div>
+
+            <div className="controls-row">
+                <button className="secondary-btn" onClick={() => setIsAudioEnabled((prev) => !prev)}>
+                    {isAudioEnabled ? "Mute" : "Unmute"}
+                </button>
+                <button className="secondary-btn" onClick={() => setIsVideoEnabled((prev) => !prev)}>
+                    {isVideoEnabled ? "Camera Off" : "Camera On"}
+                </button>
+                <button
+                    className="secondary-btn"
+                    onClick={() => {
+                        closePeerConnections();
+                        setLobby(true);
+                        setConnectionState("waiting");
+                        socketRef.current?.disconnect();
+                        socketRef.current?.connect();
+                    }}
+                >
+                    Find New Match
+                </button>
+                <button
+                    className="danger-btn"
+                    onClick={() => {
+                        closePeerConnections();
+                        onLeave();
+                    }}
+                >
+                    Leave
+                </button>
+            </div>
+        </div>
     </div>
 }
