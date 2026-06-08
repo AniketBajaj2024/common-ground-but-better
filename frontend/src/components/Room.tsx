@@ -16,37 +16,64 @@ export const Room = ({
     localAudioTrack : MediaStreamTrack | null,
     localVideoTrack : MediaStreamTrack | null
 }) => {
-    const [searchParams] = useSearchParams();
-    const [socket, setSocket] = useState<Socket | null>(null);
     const [lobby, setLobby] = useState(true);
-    const [sendingPc,setSendningPc] = useState<null | RTCPeerConnection>(null);
-    const [receivingPc, setReceivingPc] = useState<null | RTCPeerConnection>(null);
-    const [remoteVideoTrack, setRemoteVideoTrack] = useState<MediaStreamTrack | null>(null);
-    const [remoteAudioTrack, setRemoteAudioTrack] = useState<MediaStreamTrack | null>(null);
-    const [remoteMediaStream, setRemoteMediaStream] = useState<MediaStream | null>(null);
+    const sendingPcRef = useRef<RTCPeerConnection | null>(null);
+    const receivingPcRef = useRef<RTCPeerConnection | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
-    const localVideoRef =useRef<HTMLVideoElement>(null);
+    const localVideoRef = useRef<HTMLVideoElement>(null);
 
+    const tracksRef = useRef({ video: localVideoTrack, audio: localAudioTrack });
 
-    
+    useEffect(() => {
+        tracksRef.current = { video: localVideoTrack, audio: localAudioTrack };
+    }, [localVideoTrack, localAudioTrack]);
+
+    const pendingCandidates = useRef<{ sender: RTCIceCandidateInit[], receiver: RTCIceCandidateInit[] }>({
+        sender: [],
+        receiver: []
+    });
 
 
     useEffect(() => {
         const socket = io(URL);
 
+        const attachPeerConnectionLogs = (pc: RTCPeerConnection, label: string) => {
+            pc.oniceconnectionstatechange = () => console.log(`${label} iceConnectionState:`, pc.iceConnectionState);
+            pc.onsignalingstatechange = () => console.log(`${label} signalingState:`, pc.signalingState);
+            pc.onconnectionstatechange = () => console.log(`${label} connectionState:`, pc.connectionState);
+        };
+
+        const addRemoteTrackToVideo = (track: MediaStreamTrack) => {
+            if (!remoteVideoRef.current) return;
+
+            if (!remoteVideoRef.current.srcObject) {
+                remoteVideoRef.current.srcObject = new MediaStream();
+            }
+
+            const stream = remoteVideoRef.current.srcObject as MediaStream;
+            stream.addTrack(track);
+
+            if (track.kind === "video") {
+                remoteVideoRef.current.play().catch(() => {});
+            }
+        };
+
         const handleSendOffer = async (data: { roomId: string }) => {
-            // alert("Send offer");
             console.log("sending offer");
             setLobby(false);
             const pc = new RTCPeerConnection();
-            setSendningPc(pc);
-            if(localVideoTrack){
-                pc.addTrack(localVideoTrack);
+            sendingPcRef.current = pc;
+
+            attachPeerConnectionLogs(pc, "SENDER_PC");
+
+            const remoteStream = new MediaStream();
+            if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = remoteStream;
             }
 
-            if(localAudioTrack){
-                pc.addTrack(localAudioTrack);
-            }
+            if (tracksRef.current.video) pc.addTrack(tracksRef.current.video);
+            if (tracksRef.current.audio) pc.addTrack(tracksRef.current.audio);
+            
 
             pc.onicecandidate = async(e)=>{
                 console.log("recieving ice candidate locally");
@@ -58,6 +85,10 @@ export const Room = ({
                     })
                 }
             }
+
+            pc.ontrack = ({ track }) => {
+                addRemoteTrackToVideo(track);
+            };
 
             
             // In WEBRTC one peer to peer connection so if 3rd user comes in then it will send request to remaining two but RTC can only make on p2p connection: https://stackoverflow.com/questions/66062565/failed-to-set-remote-answer-sdp-called-in-wrong-state-stable
@@ -77,54 +108,46 @@ export const Room = ({
 
         // here offer is nothing but the sdp we are getting from the another user
         const handleOffer = async ({ roomId, sdp :remoteSdp }: { roomId: string; sdp : RTCSessionDescriptionInit}) => {
-            // alert("Send Answer");
             console.log("reveived offer");
             console.log("sending offer")
             setLobby(false);
 
             const pc = new RTCPeerConnection();
             // remote description will tell that the other person have this sdp so 
-            pc.setRemoteDescription(remoteSdp);
-            const sdp = await pc.createAnswer();
+            
+            receivingPcRef.current = pc;
+            attachPeerConnectionLogs(pc, "RECEIVER_PC");
 
-            //@ts-ignore
-            pc.setLocalDescription(sdp);
-
-            const stream = new MediaStream()
-            if(remoteVideoRef.current){
-                remoteVideoRef.current.srcObject = stream;
-            }
-            setRemoteMediaStream(stream);
-            setReceivingPc(pc);
+            if (tracksRef.current.video) pc.addTrack(tracksRef.current.video);
+            if (tracksRef.current.audio) pc.addTrack(tracksRef.current.audio);
+            pc.ontrack = ({ track }) => {
+                console.log("Track received on Receiver side!");
+                addRemoteTrackToVideo(track);
+        };
 
             pc.onicecandidate = async(e)=>{
                 console.log("on ice candidate on reveiving offer");
                 console.log("recieving ice candidate locally");
                 if(e.candidate){
                     socket.emit("add-ice-candidate", {
-                        candidate : e.candidate,
+                        candidate : e.candidate.toJSON(),
                         type : "receiver",
                         roomId: roomId
                     })
                 }
             }
+            
+            await pc.setRemoteDescription(remoteSdp);
 
-            pc.ontrack = (({track , type})=>{
-                if(type == 'audio'){
-                    // setRemoteAudioTrack(track);
-                    //@ts-ignore
-                    remoteVideoRef.current?.srcObject.addTrack(track);
-                }else{
-                    // setRemoteVideoTrack(track);
-                    //@ts-ignore
-                    remoteVideoRef.current?.srcObject.addTrack(track);
 
-                }
-                //@ts-ignore
-                remoteVideoRef.current?.play();
-
+            pendingCandidates.current.sender.forEach(candidate => {
+                pc.addIceCandidate(candidate).catch(console.error);
             });
-            //  iske niche wala part comment out krna hai
+            pendingCandidates.current.sender = [];
+
+            const sdp = await pc.createAnswer();
+            await pc.setLocalDescription(sdp);
+
             socket.emit("answer", {
                 roomId,
                 sdp : sdp
@@ -134,17 +157,21 @@ export const Room = ({
         const handleAnswer = async ({ roomId, sdp : remoteSdp }: { roomId: string; sdp : RTCSessionDescriptionInit })  => {
             // alert("Connection done");
             setLobby(false);
+try {
+                if (!sendingPcRef.current) return;
+                
+                await sendingPcRef.current.setRemoteDescription(remoteSdp);
+                console.log("Remote description set successfully.");
 
-            setSendningPc(pc => {
-                pc?.setRemoteDescription(remoteSdp)
-                    .then(()=>{
-                        console.log("Remote description set successfully.")
-                    }).catch(e=>{
-                        console.error("Error setting remote description:", e);
-                    });
-                return pc;
-            })
-            console.log("loop closed");
+                // FIX 1: Process any queued ICE candidates that arrived early from the Receiver
+                pendingCandidates.current.receiver.forEach(candidate => {
+                    sendingPcRef.current?.addIceCandidate(candidate).catch(console.error);
+                });
+                pendingCandidates.current.receiver = [];
+
+            } catch (e) {
+                console.error("Error setting remote description:", e);
+            }
         };
 
         const handleLobby = () => {
@@ -158,20 +185,15 @@ export const Room = ({
         socket.on("add-ice-candidate",({candidate, type})=>{
             console.log("Add ice candidate from remote");
             console.log({candidate, type});
-            if(type == "sender"){
-                setReceivingPc(pc => {
-                    pc?.addIceCandidate(candidate)
-                    return pc;
-                })
-            }else{
-                setReceivingPc(pc => {
-                    pc?.addIceCandidate(candidate)
-                    return pc;
-                })
+            const targetPc = type === "sender" ? receivingPcRef.current : sendingPcRef.current;
+            if (!targetPc) return;
+            if (!targetPc.remoteDescription) {
+                pendingCandidates.current[type as keyof typeof pendingCandidates.current].push(candidate);
+                console.log(`Queued early ICE candidate for ${type}`);
+            } else {
+                targetPc.addIceCandidate(candidate).catch(e => console.error("Error adding ICE candidate", e));
             }
         } )
-
-        setSocket(socket);
 
         return () => {
             socket.off('send-offer', handleSendOffer);
@@ -183,21 +205,19 @@ export const Room = ({
     }, [name]);
 
 
-    useEffect(()=>{
-        if(localVideoRef.current){
-            if(localVideoTrack){
-                localVideoRef.current.srcObject = new MediaStream([localVideoTrack]);
-                localVideoRef.current.play();
-            }
-
+    useEffect(() => {
+        if (localVideoRef.current && localVideoTrack) {
+            localVideoRef.current.srcObject = new MediaStream([localVideoTrack]);
         }
-    }, [localVideoRef]);
+    }, [localVideoTrack]);
 
 
     return <div>
         Hi {name}
+        <div>Local video</div>
         <video autoPlay width={400} height={400} ref= {localVideoRef}/>
         {lobby ? "Waiting to connect you to someone" : null}
+        <div>Remote video</div>
         <video autoPlay width={400} height={400} ref= {remoteVideoRef}/>
     </div>
 }
