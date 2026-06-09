@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
-const URL = "http://localhost:4000";
+const URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:4000";
 
 // Here we have two peer connections one is recieving the video or whatever and other is sending the video thats why we put recievingPc and sendingPc
 // on google meet there is only single server but on websites like omegle there is always two connections
+
+
 
 export const Room = ({
     name,
