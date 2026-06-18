@@ -3,7 +3,8 @@ import { RoomManager } from "./RoomManager";
 
 export interface User{
     socket : Socket,
-    name: String
+    name: String,
+    interests: string[];
 };
 export class UserManager{
     private users : User[];
@@ -15,9 +16,10 @@ export class UserManager{
         this.roomManager = new RoomManager();
     }
 
-    addUser(name : String , socket : Socket){
+    addUser(name : String , interests: string[], socket : Socket){
             this.users.push({
             name,
+            interests,
             socket
         });
         if (!this.queue.includes(socket.id)) {

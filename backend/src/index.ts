@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import { Server, Socket } from 'socket.io';
 import { UserManager } from './managers/UserManager';
+import "dotenv/config";
 
 console.log("Starting server...");
 
@@ -17,7 +18,16 @@ const userManager = new UserManager();
 
 io.on('connection', (socket: Socket) => {
     console.log("A user connected");
-    userManager.addUser("random User", socket);
+    // userManager.addUser("random User", socket);
+    socket.on("register-user", ({ name, interests }: { name: string, interests: string[] }) => {
+        console.log(`Registering user: ${name} with interests:`, interests);
+        
+        // Ensure interests is always an array
+        const userInterests = Array.isArray(interests) ? interests : [];
+        
+        userManager.addUser(name || "Anonymous", userInterests, socket);
+    });
+    
     socket.on("disconnect", ()=>{
         console.log("user disconnected");
         userManager.removeUser(socket.id);

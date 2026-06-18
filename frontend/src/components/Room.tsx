@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
-const URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:4000";
+const URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
 
 // Here we have two peer connections one is recieving the video or whatever and other is sending the video thats why we put recievingPc and sendingPc
-// on google meet there is only single server but on websites like omegle there is always two connections
+// on google meet there is only single server   but on websites like omegle there is always two connections
 
 
 
 export const Room = ({
     name,
+    interests,
     localAudioTrack,
     localVideoTrack,
     onLeave
 } :{
     name : string,
+    interests: string[];
     localAudioTrack : MediaStreamTrack | null,
     localVideoTrack : MediaStreamTrack | null,
     onLeave: () => void
@@ -23,6 +25,9 @@ export const Room = ({
     const [connectionState, setConnectionState] = useState<"connecting" | "waiting" | "connected" | "disconnected">("connecting");
     const [isAudioEnabled, setIsAudioEnabled] = useState(true);
     const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+
+    const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+    const [sharedInterests, setSharedInterests] = useState<string[]>([]);
 
     const sendingPcRef = useRef<RTCPeerConnection | null>(null);
     const receivingPcRef = useRef<RTCPeerConnection | null>(null);
@@ -104,6 +109,8 @@ export const Room = ({
                     closePeerConnections();
                     setConnectionState("waiting");
                     setLobby(true);
+                    setAiSuggestions([]);
+                    setSharedInterests([]);
                 }
             };
         };
@@ -259,10 +266,13 @@ export const Room = ({
         const handleLobby = () => {
             setLobby(true);
             setConnectionState("waiting");
+            setAiSuggestions([]);
+            setSharedInterests([]);
         };
 
         const handleSocketConnect = () => {
             setConnectionState("waiting");
+            socket.emit("register-user", { name, interests });
         };
 
         const handleSocketDisconnect = () => {
@@ -277,6 +287,12 @@ export const Room = ({
             }
         };
 
+        const handleAiSuggestions = (data: { sharedInterests: string[], suggestions: string[] }) => {
+            console.log("Received AI Suggestions:", data);
+            setSharedInterests(data.sharedInterests);
+            setAiSuggestions(data.suggestions);
+        };
+
         socket.on("connect", handleSocketConnect);
         socket.on("disconnect", handleSocketDisconnect);
         socket.on("message", handleMessage);
@@ -284,6 +300,7 @@ export const Room = ({
         socket.on('offer', handleOffer);
         socket.on('answer', handleAnswer);
         socket.on('lobby', handleLobby);
+        socket.on("conversation-suggestions", handleAiSuggestions);
         socket.on("add-ice-candidate",({candidate, type})=>{
             console.log("Add ice candidate from remote");
             console.log({candidate, type});
@@ -306,10 +323,11 @@ export const Room = ({
             socket.off('offer', handleOffer);
             socket.off('answer', handleAnswer);
             socket.off('lobby', handleLobby);
+            socket.off("conversation-suggestions", handleAiSuggestions);
             socket.close();
             socketRef.current = null;
         };
-    }, [name]);
+    }, [name, interests]);
 
 
     useEffect(() => {
@@ -342,6 +360,26 @@ export const Room = ({
                 </div>
                 <span className={statusClass}>{statusLabel}</span>
             </div>
+
+            {!lobby && aiSuggestions.length > 0 && (
+                    <div style={{ padding: "15px", backgroundColor: "#f3f4f6", borderRadius: "8px", marginBottom: "20px", textAlign: "left" }}>
+                        <h3 style={{ margin: "0 0 10px 0", fontSize: "1.1rem" }}>✨ AI Icebreakers</h3>
+                        {sharedInterests.length > 0 ? (
+                            <p style={{ margin: "0 0 10px 0", color: "#059669", fontWeight: "bold" }}>
+                                You both like: {sharedInterests.join(", ")}!
+                            </p>
+                        ) : (
+                            <p style={{ margin: "0 0 10px 0", color: "#6b7280", fontStyle: "italic" }}>
+                                Finding common ground...
+                            </p>
+                        )}
+                        <ul style={{ margin: 0, paddingLeft: "20px", color: "#374151" }}>
+                            {aiSuggestions.map((suggestion, idx) => (
+                                <li key={idx} style={{ marginBottom: "5px" }}>{suggestion}</li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
 
             <div className="video-grid">
                 <div className="video-block">
