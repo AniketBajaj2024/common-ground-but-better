@@ -72,11 +72,16 @@ export const Room = ({
     };
 
     const rtcConfiguration: RTCConfiguration = {
-        iceServers: [
-            { urls: "stun:stun.l.google.com:19302" },
-            { urls: "stun:stun1.l.google.com:19302" }
-        ]
-    };
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        {
+            urls: "turn:65.0.94.233:3478",
+            username: "myuser",
+            credential: "mypassword"
+        }
+    ]
+};
 
 
     useEffect(() => {
