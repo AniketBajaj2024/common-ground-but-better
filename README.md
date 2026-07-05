@@ -77,9 +77,7 @@ Open the Vite URL shown in the terminal, allow camera and microphone permissions
 
 ## Notes
 
-- The backend is currently hardcoded to `http://localhost:4000` in the client.
 - The app is designed for 1:1 connections.
-- If you change the backend port, update the URL in `frontend/src/components/Room.tsx`.
 
 ## Current Limitations
 
